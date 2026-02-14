@@ -614,9 +614,41 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
 
     for(const pt of s.particles) {
         if(!pt.active) continue;
-        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = pt.color; ctx.globalAlpha = pt.life / pt.maxLife;
-        ctx.beginPath(); if (pt.type === 'spark') ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); else ctx.rect(pt.x - pt.size/2, pt.y - pt.size/2, pt.size, pt.size);
-        ctx.fill(); ctx.restore();
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = pt.life / pt.maxLife;
+
+        if (pt.type === 'lightning' && pt.targetX !== undefined && pt.targetY !== undefined) {
+             ctx.strokeStyle = pt.color;
+             ctx.lineWidth = pt.size;
+             ctx.shadowColor = pt.color;
+             ctx.shadowBlur = 10;
+             ctx.beginPath();
+             ctx.moveTo(pt.x, pt.y);
+
+             // Jagged line generation
+             const dist = Math.hypot(pt.targetX - pt.x, pt.targetY - pt.y);
+             const steps = Math.floor(dist / 20);
+             const dx = (pt.targetX - pt.x) / steps;
+             const dy = (pt.targetY - pt.y) / steps;
+
+             for(let i=1; i<steps; i++) {
+                 const jag = (Math.random() - 0.5) * 20;
+                 ctx.lineTo(pt.x + dx*i + jag, pt.y + dy*i + jag);
+             }
+             ctx.lineTo(pt.targetX, pt.targetY);
+             ctx.stroke();
+        } else {
+            ctx.fillStyle = pt.color;
+            ctx.beginPath();
+            if (pt.type === 'spark') ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+            else if (pt.type === 'shard') {
+                ctx.translate(pt.x, pt.y);
+                ctx.rotate(pt.rotation || 0);
+                ctx.rect(-pt.size/2, -pt.size/2, pt.size, pt.size);
+            }
+            else ctx.rect(pt.x - pt.size/2, pt.y - pt.size/2, pt.size, pt.size);
+            ctx.fill();
+        }
+        ctx.restore();
     }
 
     for(const g of s.gems) {
