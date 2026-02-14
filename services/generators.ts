@@ -431,3 +431,49 @@ export function createEvolutionEffect(s: GameState, x: number, y: number, color:
     createExplosion(s, x, y, color, 50, 8);
     createFloatingText(s, x, y - 50, "EVOLUTION", color, 24);
 }
+
+export function createLightningBolt(s: GameState, x1: number, y1: number, x2: number, y2: number, color: string) {
+    const p = s.pools.particles.acquire();
+    if(p) {
+        p.x = x1; p.y = y1;
+        p.targetX = x2; p.targetY = y2;
+        p.life = 10; p.maxLife = 10;
+        p.color = color;
+        p.size = 2;
+        p.type = 'lightning';
+        p.active = true;
+        s.particles.push(p);
+    }
+}
+
+export function createStatusEffectParticles(s: GameState, e: any, type: 'BURN' | 'FREEZE') {
+    const count = type === 'BURN' ? 2 : 1;
+    for(let i=0; i<count; i++) {
+        const p = s.pools.particles.acquire();
+        if(p) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.random() * e.size;
+            p.x = e.x + Math.cos(angle) * dist;
+            p.y = e.y + Math.sin(angle) * dist;
+
+            p.vx = (Math.random() - 0.5) * 0.5;
+            p.vy = (Math.random() - 0.5) * 0.5 - 1.0; // Upward drift
+
+            p.life = Utils.rand(20, 40); p.maxLife = p.life;
+            p.active = true;
+
+            if (type === 'BURN') {
+                p.color = i % 2 === 0 ? '#ffaa00' : '#ff4400';
+                p.size = Utils.rand(2, 4);
+                p.type = 'spark';
+            } else {
+                p.color = '#00ffff';
+                p.size = Utils.rand(3, 6);
+                p.type = 'shard';
+                p.rotation = Math.random() * Math.PI * 2;
+                p.rv = (Math.random() - 0.5) * 0.2;
+            }
+            s.particles.push(p);
+        }
+    }
+}

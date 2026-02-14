@@ -372,6 +372,7 @@ export interface GameState {
   visualGrid: any;
   
   damageDealtBuffer: number;
+  delayedEvents: { timer: number; action: () => void }[];
 }
 
 export interface UpgradeOption {
