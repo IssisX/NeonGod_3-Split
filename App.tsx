@@ -251,7 +251,7 @@ export default function App() {
         // Calculate damage intensity (0 to 1)
         const damage = s.player && s.player.maxHp > 0 ? Math.max(0, 1.0 - (s.player.hp / s.player.maxHp)) : 0;
         
-        webglRef.current.render(gameCanvasRef.current, distortionCanvasRef.current, t, glitch, aber, damage);
+        webglRef.current.render(gameCanvasRef.current, distortionCanvasRef.current, t, glitch, aber, damage, s.camera.x, s.camera.y);
     }
 
     requestRef.current = requestAnimationFrame(gameLoop);

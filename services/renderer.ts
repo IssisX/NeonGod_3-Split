@@ -62,14 +62,55 @@ function drawDissipatingTrail(ctx: CanvasRenderingContext2D, trail: {x: number, 
     ctx.restore();
 }
 
-function drawDistortion(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, intensity: number, type: 'heat' | 'gravity') {
+// UPGRADED: Reactive Data Injection
+// R: Heat (Additive)
+// G: Gravity (Additive)
+// B: Turbulence/Movement (Additive)
+function drawDistortion(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, intensity: number, type: 'heat' | 'gravity' | 'turbulence') {
     const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    const rVal = type === 'heat' ? Math.floor(intensity * 255) : 0;
-    const gVal = type === 'gravity' ? Math.floor(intensity * 255) : 0;
-    grad.addColorStop(0, `rgba(${rVal}, ${gVal}, 0, 1.0)`);
+
+    const i255 = Math.min(255, Math.floor(intensity * 255));
+
+    const r = type === 'heat' ? i255 : 0;
+    const g = type === 'gravity' ? i255 : 0;
+    const b = type === 'turbulence' ? i255 : 0;
+
+    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1.0)`);
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.globalCompositeOperation = 'lighter'; // Accumulate distortion
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over'; // Reset
+}
+
+// NEW: Draws a velocity trail into the Blue channel (Turbulence)
+function drawFlowTrail(ctx: CanvasRenderingContext2D, x: number, y: number, vx: number, vy: number, size: number) {
+    const speed = Math.hypot(vx, vy);
+    if (speed < 0.1) return;
+
+    // Scale turbulence by speed, capped at reasonable limit
+    const intensity = Math.min(1.0, speed * 0.1);
+    const trailSize = size * 2.5;
+
+    // Draw elongated ellipse along velocity vector
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(vy, vx));
+
+    // Gradient: Center is high turbulence, tail is low
+    const grad = ctx.createLinearGradient(0, 0, -trailSize, 0);
+    const b = Math.floor(intensity * 255);
+    grad.addColorStop(0, `rgba(0, 0, ${b}, 1.0)`);
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(-trailSize/2, 0, trailSize/2, size, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
 }
 
 function drawWorldBoundary(ctx: CanvasRenderingContext2D, s: GameState) {
@@ -360,6 +401,8 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
     else ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
     ctx.fillRect(0, 0, w, h);
     
+    // Clear Distortion Map with Transparent Black (Important for additive blending)
+    distCtx.clearRect(0, 0, w, h);
     distCtx.fillStyle = '#000000'; 
     distCtx.fillRect(0, 0, w, h);
 
@@ -373,7 +416,7 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
     ctx.translate(w/2, h/2); ctx.scale(s.camera.zoom, s.camera.zoom); ctx.translate(-camX, -camY);
     distCtx.translate(w/2, h/2); distCtx.scale(s.camera.zoom, s.camera.zoom); distCtx.translate(-camX, -camY);
 
-    // BACKGROUND NEBULAE
+    // BACKGROUND NEBULAE (Visuals only, no distortion impact)
     if (s.nebulae) {
         for(const neb of s.nebulae) {
             ctx.save();
@@ -486,12 +529,22 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
             ctx.closePath(); ctx.fill();
             ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1; ctx.stroke();
         }
+
+        // Debris turbulence
+        if (Math.abs(d.vx) > 0.1 || Math.abs(d.vy) > 0.1) {
+             drawFlowTrail(distCtx, d.x, d.y, d.vx, d.vy, d.size);
+        }
+
         ctx.restore();
     }
 
     // ENEMIES
     for(const e of s.enemies) {
         if (!e.active || e.dead) continue;
+
+        // Reactive Turbulence
+        drawFlowTrail(distCtx, e.x, e.y, e.vx, e.vy, e.size);
+
         ctx.save(); ctx.translate(e.x, e.y);
         
         if (e.trail && e.trail.length > 1) {
@@ -557,6 +610,9 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
 
     const p = s.player;
     if (p.active) {
+        // Player Turbulence
+        drawFlowTrail(distCtx, p.x, p.y, p.vx, p.vy, 20);
+
         ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
         const bank = p.roll || 0;
         const bankScale = Math.max(0.6, 1.0 - Math.abs(bank * 0.4));
