@@ -32,6 +32,7 @@ export class WebGLRenderer {
       uAberration: gl.getUniformLocation(this.program, 'uAberration'),
       uDamage: gl.getUniformLocation(this.program, 'uDamage'),
       uResolution: gl.getUniformLocation(this.program, 'uResolution'),
+      uCameraPos: gl.getUniformLocation(this.program, 'uCameraPos'), // NEW
     };
 
     this.positionBuffer = gl.createBuffer();
@@ -47,6 +48,10 @@ export class WebGLRenderer {
     if (!shader) return null;
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        return null;
+    }
     return shader;
   }
 
@@ -56,6 +61,10 @@ export class WebGLRenderer {
     gl.attachShader(p, vs);
     gl.attachShader(p, fs);
     gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(p));
+        return null;
+    }
     return p;
   }
 
@@ -69,7 +78,16 @@ export class WebGLRenderer {
     return tex;
   }
 
-  render(gameCanvas: HTMLCanvasElement, distortionCanvas: HTMLCanvasElement, time: number, glitch: number, aberration: number, damage: number) {
+  render(
+      gameCanvas: HTMLCanvasElement,
+      distortionCanvas: HTMLCanvasElement,
+      time: number,
+      glitch: number,
+      aberration: number,
+      damage: number,
+      cameraX: number,
+      cameraY: number
+    ) {
     if (!this.gl || !this.program) return;
     const gl = this.gl;
 
@@ -98,6 +116,7 @@ export class WebGLRenderer {
     gl.uniform1f(this.locs.uAberration, aberration);
     gl.uniform1f(this.locs.uDamage, damage);
     gl.uniform2f(this.locs.uResolution, gl.canvas.width, gl.canvas.height);
+    gl.uniform2f(this.locs.uCameraPos, cameraX, cameraY); // NEW
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
