@@ -2,9 +2,64 @@
 import { GameState, Enemy, GameCallbacks, BossModule, Player } from '../types';
 import { CONFIG } from '../constants';
 import { Utils } from '../utils';
-import { createExplosion, createShockwave, createFloatingText, setupEnemy, spawnBoss, createAsteroid, createShipDebris, createSparks, generateNebula, spawnSquad } from './generators';
+import { createExplosion, createShockwave, createFloatingText, setupEnemy, spawnBoss, createAsteroid, createShipDebris, createSparks, generateNebula, spawnSquad, createLightningBolt, createStatusEffectParticles } from './generators';
 
 // --- LOGIC HANDLERS ---
+
+function applyStatusEffect(s: GameState, e: Enemy, type: 'BURN' | 'FREEZE', power: number, duration: number) {
+    const existing = e.status.find(st => st.type === type);
+    if (existing) {
+        existing.duration = Math.max(existing.duration, duration);
+        if (type === 'BURN') existing.power = Math.max(existing.power, power);
+    } else {
+        e.status.push({ type, duration, power, timer: 0 });
+    }
+}
+
+function triggerChainLightning(s: GameState, origin: Enemy, damage: number, bounces: number, range: number, callbacks: GameCallbacks, exclude: string[] = []) {
+    if (bounces <= 0) return;
+
+    exclude.push(origin.id);
+    const targets = s.spatialGrid.queryRadius(origin.x, origin.y, range);
+
+    let bestTarget: Enemy | null = null;
+    let minDist = range * range;
+
+    for (const t of targets) {
+        const en = t as Enemy;
+        if (!en.active || en.dead || exclude.includes(en.id) || !(en as any).hp) continue;
+
+        const dSq = (en.x - origin.x)**2 + (en.y - origin.y)**2;
+        if (dSq < minDist) {
+            minDist = dSq;
+            bestTarget = en;
+        }
+    }
+
+    if (bestTarget) {
+        createLightningBolt(s, origin.x, origin.y, bestTarget.x, bestTarget.y, '#aa00ff');
+        callbacks.playSound('spark', bestTarget.x, bestTarget.y); // Use spark sound for zap
+
+        bestTarget.hp -= damage;
+        bestTarget.hitFlash = 5;
+        createFloatingText(s, bestTarget.x, bestTarget.y - 20, Math.round(damage).toString(), '#aa00ff', 16);
+
+        if (bestTarget.hp <= 0) {
+            handleEnemyDeath(s, bestTarget, callbacks, {x: 0, y: 0});
+        }
+
+        // Chain
+        const targetId = bestTarget.id;
+        s.delayedEvents.push({
+            timer: 3,
+            action: () => {
+                if (bestTarget && bestTarget.active && bestTarget.id === targetId) {
+                     triggerChainLightning(s, bestTarget, damage * 0.8, bounces - 1, range, callbacks, exclude);
+                }
+            }
+        });
+    }
+}
 
 function handleEnemyDeath(s: GameState, e: Enemy, callbacks: GameCallbacks, knockback: {x: number, y: number}) {
     if (e.dead) return;
@@ -559,16 +614,26 @@ const EnemiesSystem = {
             // Status Effects
             for (let i = e.status.length - 1; i >= 0; i--) {
                 const st = e.status[i];
-                st.timer++;
-                if (st.timer >= 60) {
+
+                // Visuals
+                if (s.frame % 20 === 0) createStatusEffectParticles(s, e, st.type);
+
+                st.timer += s.worldTimeScale;
+                // Tick rate: Burn every 30 frames (0.5s), Freeze just exists
+                const tickRate = st.type === 'BURN' ? 30 : 60;
+
+                if (st.timer >= tickRate) {
                     st.timer = 0;
-                    st.duration--;
+                    st.duration -= (tickRate / 60); // Duration in seconds roughly
+
                     if (st.type === 'BURN') {
                         e.hp -= st.power;
+                        e.hitFlash = 2;
                         createFloatingText(s, e.x, e.y - e.size, Math.round(st.power).toString(), '#ffaa00', 12);
                         if (e.hp <= 0) handleEnemyDeath(s, e, callbacks, {x: 0, y: 0});
                     }
                 }
+
                 if (st.duration <= 0) {
                     e.status.splice(i, 1);
                 }
@@ -1063,6 +1128,21 @@ export const Systems = {
                                     s.bullets.push(splitB);
                                 }
                             }
+                        }
+
+                        // ELEMENTAL APPLICATION
+                        if (b.elemental.fire > 0) {
+                            // 20% dmg per tick, 3s duration (6 ticks) -> 120% total dmg bonus over time if full duration
+                            const burnDmg = b.dmg * 0.2 * b.elemental.fire;
+                            applyStatusEffect(s, e, 'BURN', burnDmg, 3.0);
+                        }
+                        if (b.elemental.ice > 0) {
+                            const duration = 2.0 + (b.elemental.ice * 0.5);
+                            applyStatusEffect(s, e, 'FREEZE', 0, duration);
+                        }
+                        if (b.elemental.volt > 0) {
+                            const chains = b.elemental.volt + 2;
+                            triggerChainLightning(s, e, b.dmg * 0.6, chains, 200, callbacks);
                         }
 
                         createSparks(s, b.x, b.y, b.vx, b.vy, 3, b.color);

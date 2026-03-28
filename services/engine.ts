@@ -29,6 +29,15 @@ export function updateGame(s: GameState, callbacks: GameCallbacks) {
         return; 
     }
 
+    for (let i = s.delayedEvents.length - 1; i >= 0; i--) {
+        const e = s.delayedEvents[i];
+        e.timer -= s.worldTimeScale;
+        if (e.timer <= 0) {
+            e.action();
+            s.delayedEvents.splice(i, 1);
+        }
+    }
+
     s.spatialGrid.clear();
     if (s.player.active) s.spatialGrid.insert(s.player);
     for (const e of s.enemies) {
@@ -154,7 +163,8 @@ export function createGameState(width: number, height: number): GameState {
         },
         spatialGrid: new SpatialGrid(CONFIG.WORLD.WIDTH, CONFIG.WORLD.HEIGHT, CONFIG.SPATIAL.CELL_SIZE),
         visualGrid: new VisualGrid(CONFIG.WORLD.WIDTH, CONFIG.WORLD.HEIGHT, CONFIG.GRID.CELL_SIZE),
-        damageDealtBuffer: 0
+        damageDealtBuffer: 0,
+        delayedEvents: []
     };
     
     resetPlayer(s.player, CONFIG.WORLD.WIDTH, CONFIG.WORLD.HEIGHT, 'INTERCEPTOR');
