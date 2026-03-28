@@ -2,6 +2,7 @@
 import { GameState, Enemy, Player, BossModule, Bullet } from '../types';
 import { CONFIG } from '../constants';
 import { Utils } from '../utils';
+import { MegaStructureGenerator } from './generators'; // NEW
 
 // --- VISUAL HELPERS ---
 
@@ -62,14 +63,47 @@ function drawDissipatingTrail(ctx: CanvasRenderingContext2D, trail: {x: number, 
     ctx.restore();
 }
 
-function drawDistortion(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, intensity: number, type: 'heat' | 'gravity') {
+function drawDistortion(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, intensity: number, type: 'heat' | 'gravity' | 'turbulence') {
     const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    const rVal = type === 'heat' ? Math.floor(intensity * 255) : 0;
-    const gVal = type === 'gravity' ? Math.floor(intensity * 255) : 0;
-    grad.addColorStop(0, `rgba(${rVal}, ${gVal}, 0, 1.0)`);
+
+    const i255 = Math.min(255, Math.floor(intensity * 255));
+
+    const r = type === 'heat' ? i255 : 0;
+    const g = type === 'gravity' ? i255 : 0;
+    const b = type === 'turbulence' ? i255 : 0;
+
+    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1.0)`);
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.globalCompositeOperation = 'lighter'; // Accumulate distortion
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over'; // Reset
+}
+
+function drawFlowTrail(ctx: CanvasRenderingContext2D, x: number, y: number, vx: number, vy: number, size: number) {
+    const speed = Math.hypot(vx, vy);
+    if (speed < 0.1) return;
+
+    const intensity = Math.min(1.0, speed * 0.1);
+    const trailSize = size * 2.5;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(vy, vx));
+
+    const grad = ctx.createLinearGradient(0, 0, -trailSize, 0);
+    const b = Math.floor(intensity * 255);
+    grad.addColorStop(0, `rgba(0, 0, ${b}, 1.0)`);
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(-trailSize/2, 0, trailSize/2, size, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
 }
 
 function drawWorldBoundary(ctx: CanvasRenderingContext2D, s: GameState) {
@@ -156,8 +190,6 @@ function drawEntityHP(ctx: CanvasRenderingContext2D, x: number, y: number, hp: n
     ctx.restore();
 }
 
-// --- BOSS RENDERER ---
-
 function drawBossModule(ctx: CanvasRenderingContext2D, mod: BossModule, hitFlash: number) {
     ctx.save();
     ctx.translate(mod.xOffset, mod.yOffset);
@@ -217,8 +249,6 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
     const isFast = speed > 1.5;
     
     ctx.save();
-    // Assuming we are already translated to boss center (0,0 of entity)
-    // Draw the "Core Interface" on top of the base chassis
     
     // 1. Monitor Frame
     ctx.fillStyle = '#000000';
@@ -235,7 +265,6 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
     ctx.translate(gx, gy);
 
     // 2. Eyes
-    // Colors: Cyan (Idle), Red (Fast/Hurt), White (Charging)
     const eyeColor = isCharging ? '#ffffff' : (isFast || isHurt ? '#ff0000' : e.color);
     ctx.fillStyle = eyeColor;
     ctx.shadowColor = eyeColor;
@@ -244,12 +273,12 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
     let eyeW = 10, eyeH = 6, eyeGap = 12, tilt = 0;
 
     if (isHurt) {
-        // ERROR / PAIN: Wide, mismatched
+        // ERROR / PAIN
         eyeW = 12; eyeH = 12; 
         ctx.fillRect(-eyeGap - eyeW/2, -5 - eyeH/2, eyeW, eyeH);
         ctx.fillRect(eyeGap - eyeW/2, -5 - eyeH/2 + (Math.random()*4), eyeW, eyeH * 0.5);
     } else if (isFast) {
-        // AGGRESSION: Narrow slits, tilted down
+        // AGGRESSION
         eyeW = 14; eyeH = 3; tilt = 0.3;
         
         ctx.save();
@@ -262,11 +291,11 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
         ctx.fillRect(-eyeW/2, -eyeH/2, eyeW, eyeH);
         ctx.restore();
     } else if (isCharging) {
-        // POWER: Glowing Orbs
+        // POWER
         ctx.beginPath(); ctx.arc(-eyeGap, -4, 6, 0, Math.PI*2); ctx.fill();
         ctx.beginPath(); ctx.arc(eyeGap, -4, 6, 0, Math.PI*2); ctx.fill();
     } else {
-        // IDLE: Neutral rectangles, blinking
+        // IDLE
         if (Math.random() < 0.02) eyeH = 1; // Blink
         ctx.fillRect(-eyeGap - eyeW/2, -4 - eyeH/2, eyeW, eyeH);
         ctx.fillRect(eyeGap - eyeW/2, -4 - eyeH/2, eyeW, eyeH);
@@ -277,19 +306,16 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
     ctx.shadowBlur = 0;
     
     if (isHurt) {
-        // STATIC NOISE
         for(let i=0; i<10; i++) {
             const h = Math.random() * 6;
             ctx.fillRect(-15 + i*3, 8 - h/2, 2, h);
         }
     } else if (isFast) {
-        // GRITTED TEETH MESH
         ctx.beginPath();
         ctx.rect(-14, 6, 28, 8);
         ctx.clip();
         ctx.strokeStyle = eyeColor;
         ctx.lineWidth = 1;
-        // Crosshatch
         ctx.beginPath();
         for(let i=-20; i<20; i+=4) {
             ctx.moveTo(i, 0); ctx.lineTo(i+10, 20);
@@ -297,7 +323,6 @@ function drawBossFace(ctx: CanvasRenderingContext2D, e: Enemy) {
         }
         ctx.stroke();
     } else {
-        // IDLE PULSE / VOICE
         const w = 20 + Math.sin(Date.now() * 0.01) * 10;
         const h = 2;
         ctx.fillRect(-w/2, 10 - h/2, w, h);
@@ -356,10 +381,13 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
     const w = ctx.canvas.width / s.pixelRatio;
     const h = ctx.canvas.height / s.pixelRatio;
 
+    // Clear main canvas with opaque color first (fallback for slow devices)
     if (s.player.skills.q.active) ctx.fillStyle = '#000000'; 
     else ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
     ctx.fillRect(0, 0, w, h);
     
+    // Clear Distortion Map with Transparent Black (Important for additive blending)
+    distCtx.clearRect(0, 0, w, h);
     distCtx.fillStyle = '#000000'; 
     distCtx.fillRect(0, 0, w, h);
 
@@ -370,10 +398,41 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
     const camX = s.camera.x + shakeX; 
     const camY = s.camera.y + shakeY;
     
-    ctx.translate(w/2, h/2); ctx.scale(s.camera.zoom, s.camera.zoom); ctx.translate(-camX, -camY);
-    distCtx.translate(w/2, h/2); distCtx.scale(s.camera.zoom, s.camera.zoom); distCtx.translate(-camX, -camY);
+    // Transform cameras
+    const cx = w/2; const cy = h/2;
+    ctx.translate(cx, cy); ctx.scale(s.camera.zoom, s.camera.zoom); ctx.translate(-camX, -camY);
+    distCtx.translate(cx, cy); distCtx.scale(s.camera.zoom, s.camera.zoom); distCtx.translate(-camX, -camY);
 
-    // BACKGROUND NEBULAE
+    // --- PARALLAX MEGA-STRUCTURES ---
+    // Draw deeply layered procedural tech-greeble
+    const parallaxFactor = 0.5;
+    const structW = 2000; const structH = 2000;
+    // Calculate grid cell of camera for infinite scrolling
+    const px = Math.floor((camX * parallaxFactor) / structW);
+    const py = Math.floor((camY * parallaxFactor) / structH);
+
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.globalCompositeOperation = 'source-over'; // Blend normally with background color
+
+    // Draw 2x2 grid around camera to cover viewport
+    for(let i=0; i<=1; i++) {
+        for(let j=0; j<=1; j++) {
+            const gx = px + i; const gy = py + j;
+            // Deterministic pseudo-random seed based on grid coordinate
+            const seed = (gx * 73856093) ^ (gy * 19349663);
+            const struct = MegaStructureGenerator.generate(seed, structW, structH, '#00ffff');
+
+            // Parallax offset
+            const drawX = (gx * structW) + (camX * (1 - parallaxFactor));
+            const drawY = (gy * structH) + (camY * (1 - parallaxFactor));
+
+            ctx.drawImage(struct, drawX, drawY);
+        }
+    }
+    ctx.restore();
+
+    // BACKGROUND NEBULAE (Visuals only, no distortion impact)
     if (s.nebulae) {
         for(const neb of s.nebulae) {
             ctx.save();
@@ -486,12 +545,22 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
             ctx.closePath(); ctx.fill();
             ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1; ctx.stroke();
         }
+
+        // Debris turbulence
+        if (Math.abs(d.vx) > 0.1 || Math.abs(d.vy) > 0.1) {
+             drawFlowTrail(distCtx, d.x, d.y, d.vx, d.vy, d.size);
+        }
+
         ctx.restore();
     }
 
     // ENEMIES
     for(const e of s.enemies) {
         if (!e.active || e.dead) continue;
+
+        // Reactive Turbulence
+        drawFlowTrail(distCtx, e.x, e.y, e.vx, e.vy, e.size);
+
         ctx.save(); ctx.translate(e.x, e.y);
         
         if (e.trail && e.trail.length > 1) {
@@ -557,6 +626,9 @@ export function renderGame(ctx: CanvasRenderingContext2D, distCtx: CanvasRenderi
 
     const p = s.player;
     if (p.active) {
+        // Player Turbulence
+        drawFlowTrail(distCtx, p.x, p.y, p.vx, p.vy, 20);
+
         ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
         const bank = p.roll || 0;
         const bankScale = Math.max(0.6, 1.0 - Math.abs(bank * 0.4));

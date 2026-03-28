@@ -16,12 +16,13 @@ varying vec2 vUv;
 uniform sampler2D uGameTexture;
 uniform sampler2D uDistortionTexture;
 uniform float uTime;
+uniform vec2 uResolution;
+uniform vec2 uCameraPos;
 uniform float uGlitchIntensity;
 uniform float uAberration;
 uniform float uDamage; 
-uniform vec2 uResolution;
 
-// Simplex Noise
+// --- NOISE FUNCTIONS ---
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -49,89 +50,153 @@ float snoise(vec2 v) {
   return 130.0 * dot(m, g);
 }
 
-float rand(vec2 co){
-    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+// Fractal Brownian Motion
+float fbm(vec2 st) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 4; i++) {
+        value += amplitude * snoise(st);
+        st *= 2.0;
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
+// Domain Warping for Nebula
+float nebula(vec2 st, float time) {
+    vec2 q = vec2(0.);
+    q.x = fbm( st + 0.00 * time);
+    q.y = fbm( st + vec2(1.0));
+
+    vec2 r = vec2(0.);
+    r.x = fbm( st + 1.0*q + vec2(1.7,9.2)+ 0.15*time );
+    r.y = fbm( st + 1.0*q + vec2(8.3,2.8)+ 0.126*time);
+
+    float f = fbm(st+r);
+
+    return f*f*f + 0.6*f*f + 0.5*f;
+}
+
+// ACES Tone Mapping
+vec3 aces(vec3 x) {
+  const float a = 2.51;
+  const float b = 0.03;
+  const float c = 2.43;
+  const float d = 0.59;
+  const float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
 void main() {
     vec2 uv = vUv;
-    
-    // 1. DISTORTION MAP SAMPLING
-    vec4 distMap = texture2D(uDistortionTexture, uv);
-    float heatStrength = distMap.r; // Red channel: Heat/Expansion
-    float gravityStrength = distMap.g; // Green channel: Gravity/Implosion
-    
-    // 2. HEAT HAZE (Turbulent Noise)
-    float noise = snoise(uv * 20.0 + vec2(0.0, uTime * 3.0));
-    vec2 heatOffset = vec2(noise * 0.005, noise * 0.01) * heatStrength;
-    
-    // 3. GRAVITY LENS (Pincushion/Swirl)
-    // We ideally need the center of the gravity well, but since we are using a texture map,
-    // we simulate "pull" by using the texture gradient or just noise.
-    // Better: The Green channel represents "intensity of pull". We can warp UVs based on local gradient?
-    // Simplified: Just use noise but pulling inward or twisting.
-    vec2 gravityOffset = vec2(sin(uv.y * 50.0 + uTime * 10.0), cos(uv.x * 50.0 + uTime)) * 0.02 * gravityStrength;
 
-    uv += heatOffset + gravityOffset;
-
-    // 4. GLITCH ARTIFACTS (Screen Tearing / Block Displacement)
+    // 0. GLITCH EFFECT
     if (uGlitchIntensity > 0.0) {
-        // Horizontal strips
         float strip = floor(uv.y * 20.0 + uTime * 50.0);
-        float stripNoise = rand(vec2(strip, floor(uTime * 20.0)));
-        
-        if (stripNoise < 0.1 * uGlitchIntensity) {
-            uv.x += (rand(vec2(uTime, strip)) - 0.5) * 0.2 * uGlitchIntensity;
-            // RGB Split inside the glitch strip
-            uv.x += 0.01 * uGlitchIntensity; 
+        float n = snoise(vec2(strip, floor(uTime * 20.0)));
+        if (n < 0.2 * uGlitchIntensity) {
+             uv.x += (snoise(vec2(uTime, strip)) - 0.5) * 0.05 * uGlitchIntensity;
         }
-        
-        // Vertical Jitter
-        uv.y += (rand(vec2(uTime * 10.0, 0.0)) - 0.5) * 0.01 * uGlitchIntensity;
     }
 
-    // 5. CHROMATIC ABERRATION
-    vec2 center = vec2(0.5);
-    vec2 distToCenter = uv - center;
+    // 1. DATA SAMPLING
+    vec4 distData = texture2D(uDistortionTexture, uv);
+    float heat = distData.r;       // Explosions
+    float gravity = distData.g;    // Black Holes
+    float turbulence = distData.b; // Movement/Flow
+
+    // 2. DYNAMIC BACKGROUND (REACTIVE AETHER)
+    // Scale UV by resolution to get square cells, add parallax
+    vec2 bgUV = (uv * 2.0) + (uCameraPos * 0.0002);
+
+    // Warp the background domain based on turbulence
+    float warp = turbulence * 0.2 + heat * 0.1;
+    vec2 warpedBgUV = bgUV + vec2(
+        snoise(bgUV + uTime * 0.1),
+        snoise(bgUV + uTime * 0.1 + 100.0)
+    ) * warp;
+
+    float neb = nebula(warpedBgUV * 3.0, uTime * 0.2);
+
+    // Colorize Nebula
+    vec3 col1 = vec3(0.1, 0.0, 0.2); // Deep Void
+    vec3 col2 = vec3(0.0, 0.1, 0.3); // Cyan Mist
+    vec3 col3 = vec3(0.4, 0.0, 0.5); // Purple Energy
+
+    vec3 bgCol = mix(col1, col2, neb);
+    bgCol = mix(bgCol, col3, smoothstep(0.4, 0.8, neb));
+
+    // Add "Stars" from noise peaks
+    float star = smoothstep(0.7, 1.0, snoise(bgUV * 20.0));
+    bgCol += vec3(star * 0.5);
+
+    // 3. CHROMATIC ABERRATION & DISTORTION
+    vec2 distToCenter = uv - 0.5;
     float distLen = length(distToCenter);
     
-    // Total Aberration = Base + Distortion + Glitch + Damage
+    // Intensity depends on radius + events
     float totalAberration = (uAberration * 0.01) 
-                          + (heatStrength * 0.02) 
-                          + (gravityStrength * 0.05)
-                          + (uGlitchIntensity * 0.03)
-                          + (uDamage * 0.02 * sin(uTime * 20.0));
+                          + (distLen * 0.02)
+                          + (heat * 0.03)
+                          + (gravity * 0.05)
+                          + (turbulence * 0.01)
+                          + (uDamage * 0.05 * sin(uTime * 30.0));
                           
-    // Radial Falloff for aberration (stronger at edges)
-    totalAberration *= (1.0 + distLen);
+    // Gravity sucks inwards, Heat expands
+    vec2 warpOffset = distToCenter * (heat * -0.1 + gravity * 0.2);
+    vec2 finalUV = uv + warpOffset;
 
-    vec2 rUV = uv - distToCenter * totalAberration;
-    vec2 bUV = uv + distToCenter * totalAberration;
+    // RGB Split
+    float r = texture2D(uGameTexture, finalUV - distToCenter * totalAberration).r;
+    float g = texture2D(uGameTexture, finalUV).g;
+    float b = texture2D(uGameTexture, finalUV + distToCenter * totalAberration).b;
+    vec3 gameColor = vec3(r, g, b);
 
-    float r = texture2D(uGameTexture, rUV).r;
-    float g = texture2D(uGameTexture, uv).g;
-    float b = texture2D(uGameTexture, bUV).b;
+    // 4. SINGLE-PASS BLOOM (Approximate)
+    // Sample 9 points around current pixel, keep only brights
+    vec3 bloomSum = vec3(0.0);
+    float bloomRadius = 0.004 + (heat * 0.01); // Heat increases bloom size
 
-    // 6. SCANLINES
-    float scanline = sin(uv.y * uResolution.y * 0.8) * 0.04;
-    vec3 color = vec3(r, g, b) - scanline;
-
-    // 7. VIGNETTE
-    float vignette = smoothstep(1.5, 0.4, distLen); // Inverse logic
-    color *= vignette;
-
-    // 8. DAMAGE OVERLAY (Red Pulse)
-    if (uDamage > 0.0) {
-        float pulse = sin(uTime * 10.0) * 0.5 + 0.5;
-        float edge = smoothstep(0.3, 0.8, distLen);
-        vec3 dmgColor = vec3(0.8, 0.0, 0.0) * uDamage * edge * pulse;
-        color += dmgColor;
+    // Simple 3x3 kernel
+    for(int i=-1; i<=1; i++) {
+        for(int j=-1; j<=1; j++) {
+            vec2 offset = vec2(float(i), float(j)) * bloomRadius;
+            vec3 samp = texture2D(uGameTexture, finalUV + offset).rgb;
+            // Threshold
+            float brightness = dot(samp, vec3(0.2126, 0.7152, 0.0722));
+            if(brightness > 0.6) {
+                bloomSum += samp * brightness;
+            }
+        }
     }
-    
-    // 9. GAMMA / TONE
-    color = pow(color, vec3(0.9)); // Slight gamma lift
-    color *= 1.15; // Contrast boost
+    vec3 bloom = bloomSum / 9.0 * 1.5; // Boost intensity
 
-    gl_FragColor = vec4(color, 1.0);
+    // 5. COMPOSITION
+    // Add nebula (Screen blend over dark parts of game)
+    // If game pixel is dark, show nebula. If bright, show game.
+    float gameBrightness = dot(gameColor, vec3(0.33));
+    vec3 finalColor = gameColor + bgCol * (1.0 - smoothstep(0.0, 0.2, gameBrightness));
+
+    // Add Bloom
+    finalColor += bloom;
+
+    // Add Damage Overlay
+    if (uDamage > 0.0) {
+        float pulse = sin(uTime * 15.0) * 0.5 + 0.5;
+        vec3 dmgColor = vec3(0.8, 0.0, 0.0) * uDamage * pulse * smoothstep(0.3, 1.0, distLen);
+        finalColor += dmgColor;
+    }
+
+    // 6. SCANLINES & VIGNETTE
+    float scanline = sin(finalUV.y * uResolution.y * 0.5) * 0.02;
+    finalColor -= scanline;
+    
+    float vignette = smoothstep(1.5, 0.3, distLen);
+    finalColor *= vignette;
+
+    // 7. TONE MAPPING
+    finalColor = aces(finalColor * 1.2); // Exposure boost
+
+    gl_FragColor = vec4(finalColor, 1.0);
 }
 `;
